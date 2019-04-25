@@ -288,11 +288,13 @@ class FullyConnectedNet(object):
                 if self.normalization in ["batchnorm", "layernorm"]:
                     gamma = self.params['gamma' + str(i + 1)]
                     beta = self.params['beta' + str(i + 1)]
-                    temp_out, cache['cache' + str(i + 1)] = self.affine_Normal_relu_forward(
-                        temp_out, w, b, gamma, beta, self.bn_params[i], self.normalization)
+                    temp_out, cache['cache' + str(i + 1)] = self.affine_Normal_relu_dropout_forward(
+                        temp_out, w, b, self.normalization, gamma, beta, self.bn_params[i])
                 else:
-                    temp_out, cache['cache' +
-                                    str(i + 1)] = affine_relu_forward(temp_out, w, b)
+                    # temp_out, cache['cache' +
+                    #                 str(i + 1)] = affine_relu_forward(temp_out, w, b)
+                    temp_out, cache['cache' + str(i + 1)] = self.affine_Normal_relu_dropout_forward(
+                        temp_out, w, b, mode=self.normalization)
 
         ############################################################################
         #                             END OF YOUR CODE                             #
@@ -332,13 +334,13 @@ class FullyConnectedNet(object):
                     pre_dx, cache['cache' + str(i)])
             else:
                 if self.normalization in ["batchnorm", "layernorm"]:
-                    pre_dx, dw, db, dgamma, dbeta = self.affine_Normal_relu_backward(
+                    pre_dx, dw, db, dgamma, dbeta = self.affine_Normal_relu_dropout_backward(
                         pre_dx, cache['cache' + str(i)], self.normalization)
                     grads['gamma' + str(i)] = dgamma
                     grads['beta' + str(i)] = dbeta
                 else:
-                    pre_dx, dw, db = affine_relu_backward(
-                        pre_dx, cache['cache' + str(i)])
+                    pre_dx, dw, db, _, _ = self.affine_Normal_relu_dropout_backward(
+                        pre_dx, cache['cache' + str(i)], self.normalization)
 
             dw += self.reg * self.params['W' + str(i)]
             db += self.reg * self.params['b' + str(i)]
@@ -351,24 +353,41 @@ class FullyConnectedNet(object):
 
         return loss, grads
 
-    def affine_Normal_relu_forward(self, x, w, b, gamma, beta, bn_params, mode):
+    def affine_Normal_relu_dropout_forward(self, x, w, b, mode, gamma=None, beta=None, bn_params=None):
+        Normal_cache = None
+        dp_cache = None
         a, fc_cache = affine_forward(x, w, b)
         if mode == "batchnorm":
             mid, Normal_cache = batchnorm_forward(a, gamma, beta, bn_params)
         elif mode == "layernorm":
             mid, Normal_cache = layernorm_forward(a, gamma, beta, bn_params)
-        out, relu_cache = relu_forward(mid)
-        cache = (fc_cache, Normal_cache, relu_cache)
+        else:
+            mid = a
+
+        dp, relu_cache = relu_forward(mid)
+        if self.use_dropout:
+            out, dp_cache = dropout_forward(dp, self.dropout_param)
+        else:
+            out = dp
+        cache = (fc_cache, Normal_cache, relu_cache, dp_cache)
 
         return out, cache
 
-    def affine_Normal_relu_backward(self, dout, cache, mode):
-        fc_cache, Normal_cache, relu_cache = cache
-        da = relu_backward(dout, relu_cache)
+    def affine_Normal_relu_dropout_backward(self, dout, cache, mode):
+        fc_cache, Normal_cache, relu_cache, dp_cache = cache
+        dgamma = 0.0
+        dbeta = 0.0
+        if self.use_dropout:
+            ddp = dropout_backward(dout, dp_cache)
+        else:
+            ddp = dout
+        da = relu_backward(ddp, relu_cache)
         if mode == "batchnorm":
             dmid, dgamma, dbeta = batchnorm_backward_alt(da, Normal_cache)
         elif mode == "layernorm":
             dmid, dgamma, dbeta = layernorm_backward(da, Normal_cache)
+        else:
+            dmid = da
         dx, dw, db = affine_backward(dmid, fc_cache)
 
         return dx, dw, db, dgamma, dbeta
