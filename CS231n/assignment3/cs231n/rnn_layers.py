@@ -308,7 +308,23 @@ def lstm_step_forward(x, prev_h, prev_c, Wx, Wh, b):
     #############################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
 
-    pass
+    N, H = prev_h.shape
+    #  -> N,4H
+    a = x.dot(Wx) + prev_h.dot(Wh) + b
+    a_i = a[:, :H]
+    a_f = a[:, H:2 * H]
+    a_o = a[:, 2 * H:3 * H]
+    a_g = a[:, 3 * H:]
+
+    i = sigmoid(a_i)
+    f = sigmoid(a_f)
+    o = sigmoid(a_o)
+    g = np.tanh(a_g)
+
+    next_c = f * prev_c + i * g
+    next_h = o * np.tanh(next_c)
+
+    cache = (x, prev_h, prev_c, Wx, Wh, a, i, f, o, g, next_c, next_h)
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ##############################################################################
@@ -344,7 +360,42 @@ def lstm_step_backward(dnext_h, dnext_c, cache):
     #############################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
 
-    pass
+    N, H = dnext_h.shape
+
+    x, prev_h, prev_c, Wx, Wh, a, i, f, o, g, next_c, next_h = cache
+
+    # dnext_h/do -> do
+    do = np.tanh(next_c) * dnext_h
+    # dnext_h/dnext_c
+    dnext_c = o * (1 - np.tanh(next_c) ** 2) * dnext_h + dnext_c
+    # dnext_c/df -> df
+    df = prev_c * dnext_c
+    # dnext_c/dprev_c
+    dprev_c = f * dnext_c
+    # dnext_c/di
+    di = g * dnext_c
+    # dnext_c/dg
+    dg = i * dnext_c
+
+    da = np.zeros((N, 4 * H))
+
+    # sigmoid i
+    da[:, :H] = i * (1 - i) * di
+    da[:, H:2 * H] = f * (1 - f) * df
+    da[:, 2 * H:3 * H] = o * (1 - o) * do
+    da[:, 3 * H:] = (1 - g * g) * dg
+
+    # a = x.dot(Wx) + prev_h.dot(Wh) + b
+    # N,4H D,4H
+    dx = da.dot(Wx.T)
+    # N,D N,4H
+    dWx = x.T.dot(da)
+    # N,4H H,4H
+    dprev_h = da.dot(Wh.T)
+    # N,H N,4H
+    dWh = prev_h.T.dot(da)
+    # da N,4H
+    db = np.sum(da, axis=0)
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ##############################################################################
@@ -364,8 +415,8 @@ def lstm_forward(x, h0, Wx, Wh, b):
     Note that the initial cell state is passed as input, but the initial cell
     state is set to zero. Also note that the cell state is not returned; it is
     an internal variable to the LSTM and is not accessed from outside.
-
     Inputs:
+
     - x: Input data of shape (N, T, D)
     - h0: Initial hidden state of shape (N, H)
     - Wx: Weights for input-to-hidden connections, of shape (D, 4H)
@@ -383,7 +434,18 @@ def lstm_forward(x, h0, Wx, Wh, b):
     #############################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
 
-    pass
+    N, T, D = x.shape
+    N, H = h0.shape
+
+    prev_h = h0
+    prev_c = np.zeros((N, H))
+    cache = {}
+    h = np.zeros((N, T, H))
+    for step in range(T):
+        prev_h, prev_c, cache_step = lstm_step_forward(
+            x[:, step, :], prev_h, prev_c, Wx, Wh, b)
+        h[:, step, :] = prev_h
+        cache[step] = cache_step
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ##############################################################################
@@ -415,7 +477,31 @@ def lstm_backward(dh, cache):
     #############################################################################
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
 
-    pass
+    x = cache[0][0]
+    # 注意这是一个step里面的x，大小是N，D
+    N, D = x.shape
+    _, T, H = dh.shape
+
+    dx = np.zeros((N, T, D))
+    dprev_h = np.zeros((N, H))
+    dprev_c = np.zeros((N, H))
+
+    dh0 = np.zeros((N, H))
+    dWx = np.zeros((D, 4 * H))
+    dWh = np.zeros((H, 4 * H))
+    db = np.zeros(4 * H)
+
+    for step in reversed(range(T)):
+        dnext_h = dh[:, step, :] + dprev_h
+        dnext_c = dprev_c
+
+        dx[:, step, :], dprev_h, dprev_c, dWx_temp, dWh_temp, db_temp = lstm_step_backward(
+            dnext_h, dnext_c, cache[step])
+
+        dWx += dWx_temp
+        dWh += dWh_temp
+        db += db_temp
+    dh0 = dprev_h
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     ##############################################################################
